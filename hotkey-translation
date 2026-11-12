@@ -211,16 +211,54 @@ def parse_model_row(row):
     return ""
 
 
-def theme_str(placeholder, lines):
-    return ("window {width: 55%%;} listview {lines: %d;} "
-            'entry {placeholder: "%s";}' % (lines, placeholder.replace('"', "")))
+# Mirrors ~/.config/fuzzel/fuzzel.ini so the window looks the same after the
+# switch to rofi: monospace 12, #1e1e2edd background, #cdd6f4ff text,
+# #89b4faff border, #585b70ff selection, #f38ba8ff match.
+ROFI_THEME = (
+    'window { width: 42em; border: 1px; border-color: #89b4faff; '
+    'border-radius: 10px; background-color: #1e1e2edd; padding: 8px; } '
+    'mainbox { background-color: transparent; padding: 0; spacing: 0; } '
+    'inputbar { background-color: transparent; padding: 2px 4px; } '
+    'prompt { text-color: #89b4faff; } '
+    'entry { text-color: #cdd6f4ff; placeholder-color: #6c7086ff; } '
+    'message { text-color: #6c7086ff; padding: 2px 4px; } '
+    'listview { background-color: transparent; lines: 12; padding: 2px 0 0 0; } '
+    'element { padding: 1px 4px; background-color: transparent; } '
+    'element-text { text-color: #cdd6f4ff; } '
+    'element selected { background-color: #585b70ff; text-color: #cdd6f4ff; }'
+)
+
+
+def theme_str(lines, placeholder=""):
+    theme = ROFI_THEME.replace("lines: 12;", f"lines: {lines};")
+    if placeholder:
+        theme += (' entry { placeholder: "%s"; }'
+                  % placeholder.replace('"', ""))
+    return theme
+
+
+def model_rows(models):
+    """Rows for the model window: name, context, and the id in brackets.
+    The "(free)" label is stripped so ordinary words do not match every
+    free model when filtering."""
+    rows = []
+    for m in models:
+        name = (m["name"] or m["id"]).replace("(free)", "").strip()
+        rows.append(f"{name}  {m['ctx']}  [{m['id']}]")
+    return rows
+
+
+def parse_model_row(row):
+    if row.endswith("]") and "[" in row:
+        return row.rsplit("[", 1)[1][:-1].strip()
+    return ""
 
 
 def pick_model(models, current, ime_source=False):
     """Model window: rofi dmenu over the live free list, Enter picks."""
     cmd = ["rofi", "-dmenu", "-i", "-p", "free model",
-           "-mesg", f"current: {current}    Enter 选择, Esc 返回",
-           "-theme-str", theme_str("输入片段过滤模型", 12)]
+           "-mesg", f"current: {current}    Enter: select    Esc: back",
+           "-theme-str", theme_str(12, "Filter models")]
     prev = rime_ascii()
     use_ime = prev is not None
     if use_ime:
@@ -246,12 +284,13 @@ def translate_window(info, prompt, placeholder, ime_source):
     custom key Ctrl+Tab exits with code 10, which switches to the model window.
     """
     cmd = ["rofi", "-dmenu", "-format", "f", "-p", prompt,
-           "-mesg", info + "    Ctrl+Tab 切换模型",
+           "-mesg", info + "    Ctrl+Tab: models",
            "-kb-custom-1", "Control+Tab",
            # rofi binds Ctrl+Tab to mode-next by default; free it so the
            # custom key gets through.
            "-kb-mode-next", "",
-           "-theme-str", theme_str(placeholder, 1)]
+           "-font", "monospace 12",
+           "-theme-str", theme_str(1, placeholder)]
     prev = rime_ascii()
     use_ime = prev is not None
     if use_ime:
@@ -506,8 +545,8 @@ def main():
             while True:
                 rc, typed = translate_window(
                     info, f"{src_code}\u2192{dst_code}",
-                    f"输入{lang_local(src_code)}，回车译成{lang_local(dst_code)}",
-                    ime_source)
+                    f"Type {lang_name(src_code)}, Enter to translate to "
+                    f"{lang_name(dst_code)}", ime_source)
                 if rc == 10:
                     chosen = pick_model(models, model, True)
                     if chosen:

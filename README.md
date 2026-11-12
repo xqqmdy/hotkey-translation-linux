@@ -19,6 +19,11 @@ The model window lists the live free-model list; `Enter` selects one and the
 text window reopens with the new model. `Esc` there returns to the text window,
 `Esc` in the text window quits.
 
+All window text is English regardless of the source language. The rofi theme
+mirrors `~/.config/fuzzel/fuzzel.ini` (monospace 12, `#1e1e2edd` background,
+`#89b4faff` border, `#585b70ff` selection, 42em wide), so the window looks the
+same as the fuzzel version did.
+
 Rime is set for the source language while the window is open: Chinese source
 forces the Chinese IME, any other source forces English, and English is left
 behind afterwards. Rime only knows those two modes, so a third language keeps
