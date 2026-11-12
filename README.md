@@ -80,6 +80,7 @@ provider policy on OpenRouter before sending anything private.
 ./tests/pick_test.sh
 ./tests/lang_test.sh
 ./tests/keys_test.sh
+./tests/cache_test.sh
 ```
 
 `fake_server_test.sh` bypasses the input prompt via `HT_TEXT`/`HT_MODEL` and
@@ -87,4 +88,6 @@ asserts the clipboard holds the translated result. `pick_test.sh` stubs
 rofi and `/models` to assert the pick is persisted and the free filter holds.
 `lang_test.sh` asserts the direction config reaches the system prompt and that
 the defaults are `zh` to `en`. `keys_test.sh` replays the window loop (Ctrl+Tab,
-model selection, text) with a stub rofi.
+model selection, text) with a stub rofi. `cache_test.sh` asserts the raw
+payload cache, the warm no-network path, read-time filters, and the stale
+serve plus background refresh.

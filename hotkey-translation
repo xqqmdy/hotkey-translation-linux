@@ -185,6 +185,15 @@ def rime_set_ascii(value):
     return p.returncode == 0
 
 
+def rime_force(value):
+    """Fire-and-forget setter for moments where nobody types immediately
+    (after the window closes, or before a model list). The retry loop in
+    rime_apply is for the pre-typing switch only; using it here cost seconds."""
+    if rime_ascii() is None:
+        return
+    rime_set_ascii(value)
+
+
 def rime_apply(want, attempts=6, settle=0.3):
     """Drive ascii mode to `want`, verifying each step. Returns final state."""
     for _ in range(attempts):
@@ -243,14 +252,24 @@ ROFI_THEME = (
     'window { width: 42em; border: 1px; border-color: #89b4faff; '
     'border-radius: 10px; background-color: #1e1e2edd; padding: 8px; } '
     'mainbox { background-color: transparent; padding: 0; spacing: 0; } '
-    'inputbar { background-color: transparent; padding: 2px 4px; } '
+    'inputbar { background-color: transparent; padding: 2px 4px; spacing: 8px; } '
     'prompt { text-color: #89b4faff; } '
     'entry { text-color: #cdd6f4ff; placeholder-color: #6c7086ff; } '
     'message { text-color: #6c7086ff; padding: 2px 4px; } '
-    'listview { background-color: transparent; lines: 12; padding: 2px 0 0 0; } '
-    'element { padding: 1px 4px; background-color: transparent; } '
-    'element-text { text-color: #cdd6f4ff; } '
-    'element selected { background-color: #585b70ff; text-color: #cdd6f4ff; }'
+    'listview { background-color: transparent; lines: 12; columns: 1; '
+    'scrollbar: false; } '
+    'scrollbar { width: 4px; handle-color: #585b70ff; '
+    'background-color: transparent; } '
+    'element { background-color: transparent; padding: 1px 4px; } '
+    'element normal.normal { background-color: transparent; '
+    'text-color: #cdd6f4ff; } '
+    'element alternate.normal { background-color: transparent; '
+    'text-color: #cdd6f4ff; } '
+    'element selected.normal { background-color: #585b70ff; '
+    'text-color: #cdd6f4ff; } '
+    'element-text { background-color: transparent; text-color: inherit; } '
+    'element-text highlight { text-color: #f38ba8ff; } '
+    'element-text selected { background-color: transparent; }'
 )
 
 
@@ -284,18 +303,9 @@ def pick_model(models, current, ime_source=False):
     cmd = ["rofi", "-dmenu", "-i", "-p", "free model",
            "-mesg", f"current: {current}    Enter: select    Esc: back",
            "-theme-str", theme_str(12, "Filter models")]
-    prev = rime_ascii()
-    use_ime = prev is not None
-    if use_ime:
-        rime_apply(True)  # model ids are ASCII
-        time.sleep(0.15)
-    try:
-        proc = subprocess.run(cmd, input="\n".join(model_rows(models)) + "\n",
-                              capture_output=True, text=True)
-    finally:
-        if use_ime:
-            time.sleep(0.2)
-            rime_apply(True)
+    rime_force(True)  # model ids are ASCII
+    proc = subprocess.run(cmd, input="\n".join(model_rows(models)) + "\n",
+                          capture_output=True, text=True)
     if proc.returncode != 0:
         return None
     return parse_model_row(proc.stdout.strip())
@@ -329,8 +339,7 @@ def translate_window(info, prompt, placeholder, ime_source):
                               capture_output=True, text=True)
     finally:
         if use_ime:
-            time.sleep(0.2)
-            rime_apply(True)  # leave English behind
+            rime_force(True)  # leave English behind, no verification delay
     return proc.returncode, proc.stdout.strip()
 
 
@@ -359,27 +368,14 @@ def write_json(path, data):
         pass
 
 
-def fetch_models(base_url, ttl):
-    """Free models live from OpenRouter /models, cached for `ttl` seconds.
-    Falls back to stale cache; empty list when nothing is available."""
-    cached = read_json(MODELS_CACHE)
-    if isinstance(cached, dict):
-        age = time.time() - cached.get("fetched", 0)
-        if cached.get("base") == base_url and age < ttl and cached.get("models"):
-            return cached["models"]
-    url = base_url.rstrip("/") + "/models"
-    try:
-        req = urllib.request.Request(url, headers={
-            "HTTP-Referer": "https://github.com/xqqmdy/hotkey-translation",
-            "X-Title": "hotkey-translation",
-        })
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            payload = json.loads(resp.read().decode())
-        rows = payload.get("data") or []
-    except (urllib.error.URLError, ValueError, OSError):
-        rows = []
+def filter_models(rows):
+    """Free, text-only models from a raw /models payload.
+
+    Applied on every read, so rule changes take effect immediately instead of
+    waiting for the cache to expire.
+    """
     models = []
-    for row in rows:
+    for row in rows or []:
         mid = row.get("id") or ""
         if not mid:
             continue
@@ -404,13 +400,69 @@ def fetch_models(base_url, ttl):
             "ctx": f"{ctx // 1000}K" if isinstance(ctx, int) and ctx else "",
         })
     models.sort(key=lambda m: m["name"].lower())
-    if models:
-        write_json(MODELS_CACHE, {"fetched": time.time(), "base": base_url,
-                                  "models": models})
-        return models
-    if isinstance(cached, dict) and cached.get("models"):
-        return cached["models"]
-    return []
+    return models
+
+
+def download_models(base_url):
+    """Raw /models payload, or None on failure."""
+    url = base_url.rstrip("/") + "/models"
+    try:
+        req = urllib.request.Request(url, headers={
+            "HTTP-Referer": "https://github.com/xqqmdy/hotkey-translation",
+            "X-Title": "hotkey-translation",
+        })
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            payload = json.loads(resp.read().decode())
+        return payload.get("data") or None
+    except (urllib.error.URLError, ValueError, OSError):
+        return None
+
+
+def write_models_cache(base_url, rows):
+    write_json(MODELS_CACHE, {"fetched": time.time(), "base": base_url,
+                              "data": rows})
+
+
+def refresh_in_background():
+    """Update the cache without making the user wait for the network."""
+    try:
+        subprocess.Popen([sys.executable, os.path.realpath(sys.argv[0]),
+                          "--refresh-models"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass
+
+
+def fetch_models(base_url, ttl):
+    """Free models for the window.
+
+    The cache holds the raw /models payload and filters run on read. A fresh
+    cache is used without network. A stale one is served immediately and
+    refreshed in the background, so the hotkey never blocks on /models. Only a
+    missing cache costs one blocking fetch. The older cache format (filtered
+    "models") is still read as a fallback.
+    """
+    cached = read_json(MODELS_CACHE)
+    legacy = None
+    if isinstance(cached, dict) and cached.get("base") == base_url:
+        age = time.time() - cached.get("fetched", 0)
+        rows = cached.get("data")
+        if rows:
+            models = filter_models(rows)
+            if age < ttl:
+                return models
+            if models:
+                refresh_in_background()
+                return models
+        legacy = cached.get("models")
+
+    rows = download_models(base_url)
+    if rows:
+        write_models_cache(base_url, rows)
+        return filter_models(rows)
+
+    return legacy or []
 
 
 def last_model():
@@ -507,12 +559,16 @@ def translate(base_url, api_key, model, text, timeout, prompt):
 
 
 def main():
-    if "--rofi-script" in sys.argv[1:]:
-        rofi_script()
-        return
     cfg = load_config(os.environ.get("HT_CONFIG", CONFIG_DEFAULT))
-    api_key = os.environ.get("OPENROUTER_API_KEY") or cfg.get("openrouter_api_key", "")
     base_url = os.environ.get("OPENROUTER_BASE_URL") or cfg.get("base_url", DEFAULT_BASE_URL)
+
+    if "--refresh-models" in sys.argv[1:]:
+        rows = download_models(base_url)
+        if rows:
+            write_models_cache(base_url, rows)
+        return
+
+    api_key = os.environ.get("OPENROUTER_API_KEY") or cfg.get("openrouter_api_key", "")
     try:
         timeout = int(cfg.get("timeout_secs", 30))
     except (TypeError, ValueError):
@@ -529,6 +585,11 @@ def main():
 
     # --pick: model chooser only, no translation. Bound to its own hotkey so
     # the normal flow never asks for a model.
+    if "--list-models" in sys.argv[1:]:
+        for row in model_rows(fetch_models(base_url, ttl)):
+            print(row)
+        return
+
     if "--pick" in sys.argv[1:]:
         if shutil.which("rofi") is None:
             die("rofi not found", "the picker needs rofi", 2)
