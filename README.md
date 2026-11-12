@@ -5,7 +5,7 @@ System-wide hotkey: type/select Chinese anywhere, get English back via OpenRoute
 ## Flow
 
 1. Press `Mod+Y`, a fuzzel window pops up
-2. Type Chinese, `Enter`
+2. Type Chinese, `Enter` (the input window switches rime to Chinese via D-Bus `SetAsciiMode` on open, and leaves it in English after Enter)
 3. Pick a model (`Enter` confirms the preselected default, or type to filter, or type any custom `:free` ID), `Enter`
 4. `Ctrl+V` pastes the English result
 

@@ -3,7 +3,8 @@
 
 Flow: Mod+Y pops a fuzzel input, type Chinese, Enter, pick a model
 (default preselected, Enter confirms), translation lands in the clipboard
-with a notification, Ctrl+V pastes it anywhere.
+with a notification, Ctrl+V pastes it anywhere. Rime is driven to Chinese
+while the input window is open and left in English after Enter.
 
 Config: ~/.config/zh2en/config.toml (see config.example.toml).
 Env overrides: ZH2EN_CONFIG, OPENROUTER_API_KEY, OPENROUTER_BASE_URL,
@@ -17,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import tomllib
 import urllib.request
 
@@ -72,6 +74,64 @@ def read_clipboard():
     return ""
 
 
+def dbg(msg):
+    if os.environ.get("ZH2EN_DEBUG"):
+        try:
+            with open("/tmp/zh2en-debug.log", "a") as f:
+                f.write(f"{time.monotonic():.2f} {msg}\n")
+        except OSError:
+            pass
+
+
+# The only reliable Chinese/English judge is rime's ascii mode
+# (IsAsciiMode false = Chinese, true = English). fcitx's 1/2 state does NOT
+# track it, so it is deliberately not used here.
+def rime_ascii():
+    if shutil.which("busctl") is None:
+        return None
+    try:
+        p = subprocess.run(["busctl", "--user", "call", "org.fcitx.Fcitx5",
+                            "/rime", "org.fcitx.Fcitx.Rime1", "IsAsciiMode"],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if p.returncode != 0:
+        return None
+    out = p.stdout.strip()
+    if out.endswith("true"):
+        return True
+    if out.endswith("false"):
+        return False
+    return None
+
+
+def rime_set_ascii(value):
+    """Set rime ascii mode on the focused input context (True = English)."""
+    if shutil.which("busctl") is None:
+        return False
+    try:
+        p = subprocess.run(["busctl", "--user", "call", "org.fcitx.Fcitx5",
+                            "/rime", "org.fcitx.Fcitx.Rime1", "SetAsciiMode",
+                            "b", "true" if value else "false"],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return p.returncode == 0
+
+
+def rime_apply(want, attempts=6, settle=0.3):
+    """Drive ascii mode to `want`, verifying each step. Returns final state."""
+    for _ in range(attempts):
+        cur = rime_ascii()
+        dbg(f"rime apply want={want} cur={cur}")
+        if cur is None or cur == want:
+            return cur
+        if not rime_set_ascii(want):
+            return cur
+        time.sleep(settle)
+    return rime_ascii()
+
+
 def fuzzel(args, stdin_text):
     try:
         p = subprocess.run(["fuzzel", *args], input=stdin_text,
@@ -87,8 +147,40 @@ def prompt_text():
     args = ["--dmenu", "--prompt", "zh2en> ",
             "--placeholder", "输入中文，回车翻译",
             "--width", "60", "--lines", "0"]
-    out = fuzzel(args, "")
-    return out or None
+    try:
+        proc = subprocess.Popen(["fuzzel", *args], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True)
+    except OSError:
+        return None
+    prev = rime_ascii()
+    dbg(f"rime ascii prev={prev}")
+    # fuzzel shows its window only after stdin EOF, so close it first, then
+    # drive the popup's input context to Chinese. No keystroke synthesis:
+    # the D-Bus setter applies to the focused context and is verified.
+    try:
+        proc.stdin.write("")
+        proc.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass
+    if prev is not None:
+        time.sleep(0.15)
+        rime_apply(False)
+    try:
+        out, _ = proc.communicate(timeout=120)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, _ = proc.communicate()
+    finally:
+        # Enter means done: leave the input context in English so the next
+        # keystrokes in the app are English. This is deliberate, not a
+        # restore of the pre-open mode.
+        if prev is not None:
+            time.sleep(0.3)
+            rime_apply(True)
+    if proc.returncode != 0:
+        return None  # Esc / cancel
+    return out.strip() or None
 
 
 def prompt_model(models, default):
