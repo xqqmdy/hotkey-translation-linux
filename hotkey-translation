@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""hotkey-translation: type source-language text in fuzzel, get the target language in the clipboard.
+"""hotkey-translation: type source-language text in rofi, get the target language in the clipboard.
 
-Flow: Mod+Y pops a fuzzel input, type Chinese, Enter; translation lands in
+Flow: Mod+Y pops a rofi input, type Chinese, Enter; translation lands in
 the clipboard with a notification, Ctrl+V pastes it anywhere. Rime is driven
 to Chinese while the input window is open and left in English after Enter.
 The model is never asked for in this flow: `hotkey-translation --pick` opens a
@@ -10,7 +10,7 @@ live free-model list (fetched from OpenRouter, not a curated list).
 Config: ~/.config/hotkey-translation/config.toml (see config.example.toml).
 Env overrides: HT_CONFIG, OPENROUTER_API_KEY, OPENROUTER_BASE_URL,
 HT_TEXT (skip input prompt), HT_MODEL (skip model resolution).
-Fallback: no fuzzel binary -> translate clipboard content directly.
+Fallback: no rofi binary -> translate clipboard content directly.
 Stdlib only.
 """
 
@@ -173,17 +173,6 @@ def rime_apply(want, attempts=6, settle=0.3):
     return rime_ascii()
 
 
-def fuzzel(args, stdin_text):
-    try:
-        p = subprocess.run(["fuzzel", *args], input=stdin_text,
-                           capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if p.returncode != 0:
-        return None  # Esc / cancel
-    return p.stdout.strip()
-
-
 def model_label(model, models):
     """Short label for the active model: display name when the live list has
     it, else the bare id with the :free marker trimmed."""
@@ -194,83 +183,88 @@ def model_label(model, models):
     return model.split("/")[-1].replace(":free", "")
 
 
-def model_lines(models):
-    """Tab-separated rows shown in the window: id, name, context. Rendered as
-    columns with --with-nth; a full line comes back on selection."""
-    return "".join("\t".join([m["id"], m["name"], m["ctx"]]) + "\n"
-                   for m in models)
+def model_query(text):
+    """Return the model filter when the input starts with a colon prefix.
+    Chinese IMEs emit the fullwidth colon, so both forms (and a few variants)
+    are accepted. None when this is not a model query."""
+    t = (text or "").strip()
+    for prefix in (":", "：", "﹕", "ː"):
+        if t.startswith(prefix):
+            return t[len(prefix):].strip()
+    return None
 
 
-def prompt_text(placeholder, ime_source, info, rows=""):
-    # Single window for both jobs: the list holds the live models, the input
-    # box takes the source text. Typing that matches no model returns the raw
-    # text (fuzzel dmenu custom entry); picking a row returns its full line.
-    # The active model and direction ride along in the --mesg line.
-    args = ["--dmenu", "--prompt", "translate> ",
-            "--placeholder", placeholder,
-            "--tabs", "2",
-            "--with-nth", "{2}  {3}  [{1}]",
-            "--width", "60"]
-    if rows:
-        args += ["--minimal-lines", "--lines", "10"]
-    else:
-        args += ["--lines", "0"]
-    if info:
-        args += ["--mesg", info, "--mesg-mode", "expand"]
-    try:
-        proc = subprocess.Popen(["fuzzel", *args], stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                text=True)
-    except OSError:
-        return None
+def model_rows(models):
+    """Rows for the model window: name, context, and the id in brackets.
+    The "(free)" label is stripped so ordinary words do not match every
+    free model when filtering."""
+    rows = []
+    for m in models:
+        name = (m["name"] or m["id"]).replace("(free)", "").strip()
+        rows.append(f"{name}  {m['ctx']}  [{m['id']}]")
+    return rows
+
+
+def parse_model_row(row):
+    if row.endswith("]") and "[" in row:
+        return row.rsplit("[", 1)[1][:-1].strip()
+    return ""
+
+
+def theme_str(placeholder, lines):
+    return ("window {width: 55%%;} listview {lines: %d;} "
+            'entry {placeholder: "%s";}' % (lines, placeholder.replace('"', "")))
+
+
+def pick_model(models, current, ime_source=False):
+    """Model window: rofi dmenu over the live free list, Enter picks."""
+    cmd = ["rofi", "-dmenu", "-i", "-p", "free model",
+           "-mesg", f"current: {current}    Enter 选择, Esc 返回",
+           "-theme-str", theme_str("输入片段过滤模型", 12)]
     prev = rime_ascii()
-    dbg(f"rime ascii prev={prev}")
-    # fuzzel shows its window only after stdin EOF, so close it first, then
-    # drive the popup's input context to the source language. Rime only knows
-    # Chinese vs English, so this runs solely for a Chinese source.
-    # No keystroke synthesis: the D-Bus setter hits the focused context and
-    # is verified.
-    try:
-        proc.stdin.write(rows)
-        proc.stdin.close()
-    except (BrokenPipeError, OSError):
-        pass
-    use_ime = prev is not None and ime_source
+    use_ime = prev is not None
     if use_ime:
+        rime_apply(True)  # model ids are ASCII
         time.sleep(0.15)
-        rime_apply(False)
     try:
-        out, _ = proc.communicate(timeout=120)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        out, _ = proc.communicate()
+        proc = subprocess.run(cmd, input="\n".join(model_rows(models)) + "\n",
+                              capture_output=True, text=True)
     finally:
-        # Enter means done: leave the input context in English so the next
-        # keystrokes in the app are English. This is deliberate, not a
-        # restore of the pre-open mode.
         if use_ime:
-            time.sleep(0.3)
+            time.sleep(0.2)
             rime_apply(True)
     if proc.returncode != 0:
-        return None  # Esc / cancel
-    return out.strip() or None
+        return None
+    return parse_model_row(proc.stdout.strip())
 
 
-def prompt_model(models, current):
-    """Live free-model picker: tab columns, display name+context+id,
-    return the id column."""
-    lines = []
-    for m in models:
-        lines.append("\t".join([m["id"], m["name"], m["ctx"]]))
-    args = ["--dmenu", "--prompt", "model> ",
-            "--tabs", "2",
-            "--with-nth", "{2}  {3}  [{1}]",
-            "--accept-nth", "1",
-            "--lines", "10", "--width", "60"]
-    if current:
-        args += ["--select", current]
-    out = fuzzel(args, "\n".join(lines) + "\n")
-    return out.strip() if out else None
+def translate_window(info, prompt, placeholder, ime_source):
+    """Text window.
+
+    -format f returns the typed filter instead of a selected row, so Enter
+    always submits the text (rofi refuses custom entries otherwise). The
+    custom key Alt+m exits with code 10, which switches to the model window.
+    """
+    cmd = ["rofi", "-dmenu", "-format", "f", "-p", prompt,
+           "-mesg", info + "    Alt+m 切换模型",
+           "-kb-custom-1", "alt+m",
+           "-theme-str", theme_str(placeholder, 1)]
+    prev = rime_ascii()
+    use_ime = prev is not None
+    if use_ime:
+        # Rime only knows Chinese vs English: force the one the source needs,
+        # otherwise ASCII keystrokes land in the pinyin preedit and the first
+        # Enter is swallowed by the IME.
+        rime_apply(False if ime_source else True)
+        time.sleep(0.15)
+    try:
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True)
+    finally:
+        if use_ime:
+            time.sleep(0.2)
+            rime_apply(True)  # leave English behind
+    return proc.returncode, proc.stdout.strip()
 
 
 CACHE_DIR = os.path.expanduser("~/.cache/hotkey-translation")
@@ -446,6 +440,9 @@ def translate(base_url, api_key, model, text, timeout, prompt):
 
 
 def main():
+    if "--rofi-script" in sys.argv[1:]:
+        rofi_script()
+        return
     cfg = load_config(os.environ.get("HT_CONFIG", CONFIG_DEFAULT))
     api_key = os.environ.get("OPENROUTER_API_KEY") or cfg.get("openrouter_api_key", "")
     base_url = os.environ.get("OPENROUTER_BASE_URL") or cfg.get("base_url", DEFAULT_BASE_URL)
@@ -466,17 +463,16 @@ def main():
     # --pick: model chooser only, no translation. Bound to its own hotkey so
     # the normal flow never asks for a model.
     if "--pick" in sys.argv[1:]:
-        if shutil.which("fuzzel") is None:
-            die("fuzzel not found", "the picker needs fuzzel", 2)
+        if shutil.which("rofi") is None:
+            die("rofi not found", "the picker needs rofi", 2)
         models = fetch_models(base_url, ttl)
         if not models:
             die("no free models", "cannot fetch the model list; check network")
-        chosen = prompt_model(models, model)
-        if not chosen:
-            sys.exit(0)  # Esc
-        save_last_model(chosen)
-        print(chosen)
-        notify("translation model", chosen)
+        chosen = pick_model(models, model, True)
+        if chosen:
+            save_last_model(chosen)
+            print(chosen)
+            notify("translation model", chosen)
         return
 
     if not model:
@@ -494,35 +490,40 @@ def main():
     label = model_label(model, cached)
     info = f"model: {label}  \u00b7  {src_code} \u2192 {dst_code}"
 
-    use_fuzzel = shutil.which("fuzzel") is not None
+    use_rofi = shutil.which("rofi") is not None
 
     text = os.environ.get("HT_TEXT")
     if not text:
-        if use_fuzzel:
-            models = fetch_models(base_url, ttl)
-            rows = model_lines(models)
-            ids = {m["id"] for m in models}
-            placeholder = (f"输入{lang_local(src_code)}，"
-                           f"回车译成{lang_local(dst_code)}；输入模型名可切换")
-            # One window serves both jobs: a chosen model row sets the model
-            # and reopens the same window; anything else is the source text.
-            while True:
-                out = prompt_text(placeholder, ime_source, info, rows)
-                if not out:
-                    sys.exit(0)  # Esc or empty input
-                picked = out.split("\t")[0].strip() if "\t" in out else out.strip()
-                if picked in ids:
-                    model = picked
-                    save_last_model(model)
-                    label = model_label(model, models)
-                    info = f"model: {label}  \u00b7  {src_code} \u2192 {dst_code}"
-                    continue
-                text = out.strip()
-                break
-        else:
+        if not use_rofi:
             text = read_clipboard()
             if not text:
                 die("clipboard is empty", "select text, Ctrl+C, then hotkey again")
+        else:
+            models = fetch_models(base_url, ttl)
+            while True:
+                rc, typed = translate_window(
+                    info, f"{src_code}\u2192{dst_code}",
+                    f"输入{lang_local(src_code)}，回车译成{lang_local(dst_code)}",
+                    ime_source)
+                if rc == 10:
+                    chosen = pick_model(models, model, True)
+                    if chosen:
+                        model = chosen
+                        save_last_model(model)
+                        info = (f"model: {model_label(model, models)}  \u00b7  "
+                                f"{src_code} \u2192 {dst_code}")
+                    continue
+                if rc != 0 or not typed:
+                    sys.exit(0)
+                models2 = fetch_models(base_url, ttl)
+                if typed.strip() in {m["id"] for m in models2}:
+                    model = typed.strip()
+                    save_last_model(model)
+                    info = (f"model: {model_label(model, models2)}  \u00b7  "
+                            f"{src_code} \u2192 {dst_code}")
+                    continue
+                text = typed
+                break
 
     result = translate(base_url, api_key, model, text, timeout, prompt)
     write_clipboard(result)
