@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""zh2en-hotkey: type Chinese in fuzzel, pick a model, get English in clipboard.
+
+Flow: Mod+Y pops a fuzzel input, type Chinese, Enter, pick a model
+(default preselected, Enter confirms), translation lands in the clipboard
+with a notification, Ctrl+V pastes it anywhere.
+
+Config: ~/.config/zh2en/config.toml (see config.example.toml).
+Env overrides: ZH2EN_CONFIG, OPENROUTER_API_KEY, OPENROUTER_BASE_URL,
+ZH2EN_TEXT (skip input prompt), ZH2EN_MODEL (skip model picker).
+Fallback: no fuzzel binary -> translate clipboard content directly.
+Stdlib only.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tomllib
+import urllib.request
+
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+CONFIG_DEFAULT = os.path.expanduser("~/.config/zh2en/config.toml")
+
+SYSTEM_PROMPT = (
+    "Translate the user's Chinese text into natural, idiomatic English. "
+    "Output ONLY the English translation as plain text: no explanations, "
+    "no quotation marks, no pinyin, no alternatives. "
+    "Single word in, single most common equivalent out. "
+    "Sentence in, one faithful English sentence out."
+)
+
+
+def notify(title, body=""):
+    try:
+        subprocess.run(
+            ["notify-send", title, body[:400]], check=False,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
+def die(title, detail="", code=1):
+    msg = f"{title}: {detail}" if detail else title
+    print(f"zh2en: {msg}", file=sys.stderr)
+    notify("zh2en failed", msg[:400])
+    sys.exit(code)
+
+
+def load_config(path):
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        die("cannot read config", f"{path}: {e}", 2)
+    except tomllib.TOMLDecodeError as e:
+        die("bad config TOML", f"{path}: {e}", 2)
+
+
+def read_clipboard():
+    for args in (["wl-paste", "--no-newline"], ["wl-paste", "--primary", "--no-newline"]):
+        try:
+            p = subprocess.run(args, capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if p.returncode == 0 and p.stdout.strip():
+            return p.stdout.strip()
+    return ""
+
+
+def fuzzel(args, stdin_text):
+    try:
+        p = subprocess.run(["fuzzel", *args], input=stdin_text,
+                           capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if p.returncode != 0:
+        return None  # Esc / cancel
+    return p.stdout.strip()
+
+
+def prompt_text():
+    args = ["--dmenu", "--prompt", "zh2en> ",
+            "--placeholder", "输入中文，回车翻译",
+            "--width", "60", "--lines", "0"]
+    out = fuzzel(args, "")
+    return out or None
+
+
+def prompt_model(models, default):
+    args = ["--dmenu", "--prompt", "model> ",
+            "--select", default,
+            "--lines", str(min(max(len(models), 1), 10))]
+    out = fuzzel(args, "\n".join(models) + "\n")
+    return out or None
+
+
+def write_clipboard(text):
+    # wl-copy forks a daemon to serve the clipboard offer and the child
+    # inherits our fds, so stdout/stderr must go to DEVNULL or communicate()
+    # waits for EOF forever (whispers spawns it with stdio null likewise).
+    try:
+        p = subprocess.run(["wl-copy"], input=text, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        die("wl-copy failed", str(e))
+    if p.returncode != 0:
+        die("wl-copy failed", f"exit {p.returncode}")
+
+
+def translate(base_url, api_key, model, text, timeout):
+    body = json.dumps({
+        "model": model,
+        "temperature": 0.2,
+        "max_tokens": 512,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": text},
+        ],
+    }).encode()
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/chat/completions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/xqqmdy/zh2en",
+            "X-Title": "zh2en-hotkey",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode()[:300]
+        except OSError:
+            detail = ""
+        if e.code == 401:
+            die("OpenRouter auth failed (401)", "check openrouter_api_key in config")
+        if e.code == 402:
+            die("OpenRouter payment required (402)", detail or "free model unavailable")
+        if e.code == 404:
+            die("model not found (404)", "free model IDs rotate, pick another in the picker")
+        if e.code == 429:
+            die("rate limited (429)", "free tier quota hit, wait and retry")
+        die(f"OpenRouter HTTP {e.code}", detail)
+    except urllib.error.URLError as e:
+        die("network error", str(e.reason)[:200])
+    try:
+        content = payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        die("bad API response", json.dumps(payload)[:300])
+    out = content.strip()
+    if len(out) >= 2 and out[0] == out[-1] and out[0] in ("\"", "'", "\u201c"):
+        out = out[1:-1].strip()
+    if not out:
+        die("empty translation", "model returned nothing")
+    return out
+
+
+def main():
+    cfg = load_config(os.environ.get("ZH2EN_CONFIG", CONFIG_DEFAULT))
+    api_key = os.environ.get("OPENROUTER_API_KEY") or cfg.get("openrouter_api_key", "")
+    default_model = os.environ.get("ZH2EN_MODEL") or cfg.get("model", "")
+    models = list(cfg.get("models") or [])
+    if default_model and default_model not in models:
+        models.insert(0, default_model)
+    base_url = os.environ.get("OPENROUTER_BASE_URL") or cfg.get("base_url", DEFAULT_BASE_URL)
+    try:
+        timeout = int(cfg.get("timeout_secs", 30))
+    except (TypeError, ValueError):
+        timeout = 30
+
+    if not api_key or api_key == "PASTE_YOUR_KEY_HERE":
+        die("missing API key", "fill openrouter_api_key in ~/.config/zh2en/config.toml", 2)
+    if not default_model and not models:
+        die("missing model", "set model/models in ~/.config/zh2en/config.toml", 2)
+
+    use_fuzzel = shutil.which("fuzzel") is not None
+
+    text = os.environ.get("ZH2EN_TEXT")
+    if not text:
+        if use_fuzzel:
+            text = prompt_text()
+            if not text:
+                sys.exit(0)  # Esc or empty input
+        else:
+            text = read_clipboard()
+            if not text:
+                die("clipboard is empty", "select Chinese text, Ctrl+C, then hotkey again")
+
+    model = os.environ.get("ZH2EN_MODEL")
+    if not model:
+        if use_fuzzel and models:
+            model = prompt_model(models, default_model or models[0])
+            if not model:
+                sys.exit(0)  # Esc
+        else:
+            model = default_model or (models[0] if models else "")
+
+    result = translate(base_url, api_key, model, text, timeout)
+    write_clipboard(result)
+    print(result)
+    notify(f"zh2en [{model.split('/')[-1][:40]}]", result)
+
+
+if __name__ == "__main__":
+    main()

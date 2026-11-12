@@ -1,0 +1,26 @@
+# zh2en config. Copy to ~/.config/zh2en/config.toml (mode 600) and fill the key.
+# Get a key at https://openrouter.ai/keys . Env OPENROUTER_API_KEY overrides this file.
+
+openrouter_api_key = "PASTE_YOUR_KEY_HERE"
+
+# Default model, preselected in the picker. Free model IDs rotate often;
+# if one 404s, pick another from models below.
+# Full live list: https://openrouter.ai/models (filter free) .
+model = "google/gemma-4-31b-it:free"
+
+# Picker list (Nov 2026 snapshot, verify before use). First entry = default.
+models = [
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "nvidia/nemotron-3.5-lightning:free",
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "liquid/lfm-3-1.7b:free",
+  "cohere/north-mini-code:free",
+  "baidu/ernie-5.5-flash-preview:free",
+]
+
+# Request timeout in seconds.
+timeout_secs = 30
+
+# API base. Leave default; tests override via OPENROUTER_BASE_URL env.
+base_url = "https://openrouter.ai/api/v1"
