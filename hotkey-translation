@@ -41,6 +41,20 @@ LANG_NAMES = {
 # limited to Chinese <-> English. Other source languages leave the IME alone.
 IME_SOURCE = {"zh", "zh-cn", "zh-tw", "zh-hans", "zh-hant"}
 
+# Short localized names for the placeholder. Falls back to the English name.
+LANG_LOCAL = {
+    "zh": "中文", "zh-cn": "中文", "zh-tw": "繁體中文", "en": "英文",
+    "ja": "日文", "ko": "韓文", "fr": "法文", "de": "德文", "es": "西班牙文",
+    "ru": "俄文", "pt": "葡萄牙文", "it": "義大利文", "nl": "荷蘭文",
+    "pl": "波蘭文", "tr": "土耳其文", "ar": "阿拉伯文", "hi": "印地文",
+    "th": "泰文", "vi": "越南文", "id": "印尼文", "uk": "烏克蘭文",
+}
+
+
+def lang_local(code):
+    code = (code or "").strip().lower()
+    return LANG_LOCAL.get(code) or lang_name(code)
+
 
 def lang_name(code):
     code = (code or "").strip()
@@ -170,10 +184,39 @@ def fuzzel(args, stdin_text):
     return p.stdout.strip()
 
 
-def prompt_text(placeholder, ime_source):
+def model_label(model, models):
+    """Short label for the active model: display name when the live list has
+    it, else the bare id with the :free marker trimmed."""
+    for m in models or []:
+        if m.get("id") == model:
+            name = m.get("name") or model
+            return name.replace("(free)", "").strip()
+    return model.split("/")[-1].replace(":free", "")
+
+
+def model_lines(models):
+    """Tab-separated rows shown in the window: id, name, context. Rendered as
+    columns with --with-nth; a full line comes back on selection."""
+    return "".join("\t".join([m["id"], m["name"], m["ctx"]]) + "\n"
+                   for m in models)
+
+
+def prompt_text(placeholder, ime_source, info, rows=""):
+    # Single window for both jobs: the list holds the live models, the input
+    # box takes the source text. Typing that matches no model returns the raw
+    # text (fuzzel dmenu custom entry); picking a row returns its full line.
+    # The active model and direction ride along in the --mesg line.
     args = ["--dmenu", "--prompt", "translate> ",
             "--placeholder", placeholder,
-            "--width", "60", "--lines", "0"]
+            "--tabs", "2",
+            "--with-nth", "{2}  {3}  [{1}]",
+            "--width", "60"]
+    if rows:
+        args += ["--minimal-lines", "--lines", "10"]
+    else:
+        args += ["--lines", "0"]
+    if info:
+        args += ["--mesg", info, "--mesg-mode", "expand"]
     try:
         proc = subprocess.Popen(["fuzzel", *args], stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -188,7 +231,7 @@ def prompt_text(placeholder, ime_source):
     # No keystroke synthesis: the D-Bus setter hits the focused context and
     # is verified.
     try:
-        proc.stdin.write("")
+        proc.stdin.write(rows)
         proc.stdin.close()
     except (BrokenPipeError, OSError):
         pass
@@ -447,15 +490,35 @@ def main():
     dst_name = lang_name(dst_code)
     prompt = build_prompt(src_code, dst_code)
     ime_source = (src_code or "").lower() in IME_SOURCE
+    cached = (read_json(MODELS_CACHE) or {}).get("models") or []
+    label = model_label(model, cached)
+    info = f"model: {label}  \u00b7  {src_code} \u2192 {dst_code}"
 
     use_fuzzel = shutil.which("fuzzel") is not None
 
     text = os.environ.get("HT_TEXT")
     if not text:
         if use_fuzzel:
-            text = prompt_text(f"输入{src_name}，回车译成{dst_name}", ime_source)
-            if not text:
-                sys.exit(0)  # Esc or empty input
+            models = fetch_models(base_url, ttl)
+            rows = model_lines(models)
+            ids = {m["id"] for m in models}
+            placeholder = (f"输入{lang_local(src_code)}，"
+                           f"回车译成{lang_local(dst_code)}；输入模型名可切换")
+            # One window serves both jobs: a chosen model row sets the model
+            # and reopens the same window; anything else is the source text.
+            while True:
+                out = prompt_text(placeholder, ime_source, info, rows)
+                if not out:
+                    sys.exit(0)  # Esc or empty input
+                picked = out.split("\t")[0].strip() if "\t" in out else out.strip()
+                if picked in ids:
+                    model = picked
+                    save_last_model(model)
+                    label = model_label(model, models)
+                    info = f"model: {label}  \u00b7  {src_code} \u2192 {dst_code}"
+                    continue
+                text = out.strip()
+                break
         else:
             text = read_clipboard()
             if not text:

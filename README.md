@@ -6,9 +6,15 @@ configurable.
 
 ## Flow
 
-1. Press `Mod+Y`, a fuzzel window pops up
-2. Type the source text, `Enter`
+1. Press `Mod+Y`, one fuzzel window pops up with the live model list
+2. Either type the source text and press `Enter`, or pick a model row to switch the model (the window reopens with the new one)
 3. `Ctrl+V` pastes the translated result
+
+The active model and direction are shown in the message line above the prompt,
+so there is no separate model window in the normal flow. fuzzel has no tab
+pages: its tab support is `--tabs` (tab expansion width) plus tab-separated
+dmenu columns via `--with-nth` / `--accept-nth` / `--match-nth`, which is what
+renders the model rows here.
 
 Source and target come from `source_lang` / `target_lang` in the config
 (defaults `zh` to `en`). Any code the model understands works (`ja`, `ko`,
@@ -25,8 +31,9 @@ if set, else the last picked one, else the first live free model.
 
 ## Picking a model
 
-`Mod+Shift+Y` (or `hotkey-translation --pick`) opens a picker built from the
-live OpenRouter `/models` response, filtered to free text models. The list is
+Model rows are built from the live OpenRouter `/models` response, filtered to
+free text models. `Mod+Shift+Y` (or `hotkey-translation --pick`) opens a
+picker-only window for the same list when you do not want to translate. The list is
 tab-separated (id, name, context) and rendered with `--with-nth` columns; the
 selected id is stored in `~/.cache/hotkey-translation/last_model`, so the next
 `Mod+Y` uses it without asking. There is no hand-written model list to
@@ -75,10 +82,12 @@ provider policy on OpenRouter before sending anything private.
 ./tests/fake_server_test.sh
 ./tests/pick_test.sh
 ./tests/lang_test.sh
+./tests/single_window_test.sh
 ```
 
 `fake_server_test.sh` bypasses the input prompt via `HT_TEXT`/`HT_MODEL` and
 asserts the clipboard holds the translated result. `pick_test.sh` stubs fuzzel
 and `/models` to assert the tab-column picker format and that the pick is
 persisted. `lang_test.sh` asserts the direction config reaches the system
-prompt and that the defaults are `zh` to `en`.
+prompt and that the defaults are `zh` to `en`. `single_window_test.sh`
+asserts that one window both accepts text and switches the model.
