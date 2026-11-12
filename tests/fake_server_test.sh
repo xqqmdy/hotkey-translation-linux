@@ -1,6 +1,6 @@
 #!/bin/sh
 # End to end test with a fake OpenRouter server. No key, no network.
-# Bypasses both fuzzel prompts via ZH2EN_TEXT/ZH2EN_MODEL, runs zh2en-hotkey
+# Bypasses both fuzzel prompts via HT_TEXT/HT_MODEL, runs hotkey-translation
 # against the fake, asserts clipboard holds the English result.
 set -eu
 cd "$(dirname "$0")/.."
@@ -47,8 +47,8 @@ sleep 0.5
 
 wl-copy --clear; wl-copy --primary --clear
 sleep 0.3
-ZH2EN_CONFIG="$TMPDIR_FIX/cfg.toml" ZH2EN_TEXT="你好世界" ZH2EN_MODEL="test-model" \
-  ./zh2en-hotkey > "$TMPDIR_FIX/out.txt"
+HT_CONFIG="$TMPDIR_FIX/cfg.toml" HT_TEXT="你好世界" HT_MODEL="test-model" \
+  ./hotkey-translation > "$TMPDIR_FIX/out.txt"
 GOT=$(wl-paste --no-newline)
 if [ "$GOT" = "Hello world" ]; then
     echo "PASS: clipboard holds English result: $GOT"

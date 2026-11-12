@@ -14,7 +14,7 @@ fd = os.open("/dev/uinput", os.O_WRONLY)
 try:
     fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
     fcntl.ioctl(fd, UI_SET_KEYBIT, KEY_ENTER)
-    os.write(fd, struct.pack("80sHHHHI64i64i64i64i", b"zh2en-testkey",
+    os.write(fd, struct.pack("80sHHHHI64i64i64i64i", b"hotkey-translation",
                              0x06, 1, 1, 1, 0, *([0] * 256)))
     fcntl.ioctl(fd, UI_DEV_CREATE)
     time.sleep(0.15)

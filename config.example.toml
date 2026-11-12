@@ -1,23 +1,21 @@
-# zh2en config. Copy to ~/.config/zh2en/config.toml (mode 600) and fill the key.
+# hotkey-translation config.
+# Copy to ~/.config/hotkey-translation/config.toml (mode 600) and fill the key.
 # Get a key at https://openrouter.ai/keys . Env OPENROUTER_API_KEY overrides this file.
 
 openrouter_api_key = "PASTE_YOUR_KEY_HERE"
 
-# Default model, preselected in the picker. Free model IDs rotate often;
-# if one 404s, pick another from models below.
-# Full live list: https://openrouter.ai/models (filter free) .
-model = "google/gemma-4-31b-it:free"
+# Translation direction. Any code the model understands works; common ones are
+# mapped to full names for the prompt (zh, en, ja, ko, fr, de, es, ru, ...).
+source_lang = "zh"
+target_lang = "en"
 
-# Picker list (Nov 2026 snapshot, verify before use). First entry = default.
-models = [
-  "google/gemma-4-31b-it:free",
-  "google/gemma-4-26b-a4b-it:free",
-  "nvidia/nemotron-3.5-lightning:free",
-  "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "liquid/lfm-3-1.7b:free",
-  "cohere/north-mini-code:free",
-  "baidu/ernie-5.5-flash-preview:free",
-]
+# Optional pinned model. Leave unset/empty to follow the last pick, falling
+# back to the first live free model. There is no curated list: the picker
+# (hotkey-translation --pick) fetches the current free models from OpenRouter.
+model = ""
+
+# Seconds to cache the fetched model list. TTL 0 refetches every pick.
+models_ttl_secs = 86400
 
 # Request timeout in seconds.
 timeout_secs = 30
