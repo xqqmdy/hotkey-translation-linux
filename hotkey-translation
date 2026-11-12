@@ -41,6 +41,25 @@ LANG_NAMES = {
 # Rime's ascii mode can only switch between these two, so the IME helper is
 # limited to Chinese <-> English. Other source languages leave the IME alone.
 IME_SOURCE = {"zh", "zh-cn", "zh-tw", "zh-hans", "zh-hant"}
+# Sources rime can express directly. Anything else (ja, ko, ar, ...) is left
+# alone: forcing English there would break IME input for that language.
+IME_LATIN = {"en", "en-us", "en-gb", "fr", "de", "es", "it", "pt", "nl",
+             "pl", "sv", "tr", "id", "vi"}
+
+
+def ime_ascii(mode):
+    """rime ascii flag for a mode: Chinese is False, English is True."""
+    return mode != "zh"
+
+
+def ime_mode(src_code):
+    """'zh', 'en', or None (leave the IME untouched)."""
+    code = (src_code or "").strip().lower()
+    if code in IME_SOURCE:
+        return "zh"
+    if code in IME_LATIN:
+        return "en"
+    return None
 
 # Short localized names for the placeholder. Falls back to the English name.
 LANG_LOCAL = {
@@ -352,20 +371,26 @@ def parse_model_row(row):
     return ""
 
 
-def pick_model(models, current, ime_source=False):
-    """Model window: rofi dmenu over the live free list, Enter picks."""
+def pick_model(models, current):
+    """Model window: rofi dmenu over the live free list, Enter picks.
+    Model ids are ASCII, so the IME is set to English for the dialog and the
+    previous mode is restored afterwards."""
     cmd = ["rofi", "-dmenu", "-i", "-p", "free model",
            "-mesg", f"current: {current}    Enter: select    Esc: back",
            "-theme", theme_file(12, "Filter models")]
-    rime_force(True)  # model ids are ASCII
+    prev = rime_ascii()
+    if prev is not None:
+        rime_force(True)
     proc = subprocess.run(cmd, input="\n".join(model_rows(models)) + "\n",
                           capture_output=True, text=True)
+    if prev is not None:
+        rime_force(prev)
     if proc.returncode != 0:
         return None
     return parse_model_row(proc.stdout.strip())
 
 
-def translate_window(info, prompt, placeholder, ime_source):
+def translate_window(info, prompt, placeholder, ime_mode):
     """Text window.
 
     -format f returns the typed filter instead of a selected row, so Enter
@@ -381,12 +406,12 @@ def translate_window(info, prompt, placeholder, ime_source):
            "-font", "monospace 12",
            "-theme", theme_file(1, placeholder)]
     prev = rime_ascii()
-    use_ime = prev is not None
+    # Only touch the IME when the source is Chinese or Latin: forcing English
+    # for a Japanese or Korean source would send its keystrokes to the ASCII
+    # path and break input. None means leave the user's mode alone.
+    use_ime = prev is not None and ime_mode is not None
     if use_ime:
-        # Rime only knows Chinese vs English: force the one the source needs,
-        # otherwise ASCII keystrokes land in the pinyin preedit and the first
-        # Enter is swallowed by the IME.
-        rime_apply(False if ime_source else True)
+        rime_apply(ime_ascii(ime_mode))
         time.sleep(0.15)
     try:
         proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,
@@ -637,7 +662,7 @@ def main():
         models = fetch_models(base_url, ttl)
         if not models:
             die("no free models", "cannot fetch the model list; check network")
-        chosen = pick_model(models, model, True)
+        chosen = pick_model(models, model)
         if chosen:
             save_last_model(chosen)
             print(chosen)
@@ -654,7 +679,7 @@ def main():
     src_name = lang_name(src_code)
     dst_name = lang_name(dst_code)
     prompt = build_prompt(src_code, dst_code)
-    ime_source = (src_code or "").lower() in IME_SOURCE
+    ime_mode_value = ime_mode(src_code)
     cached_rows = (read_json(MODELS_CACHE) or {}).get("data") or []
     label = model_label(model, filter_models(cached_rows))
     info = f"model: {label}  \u00b7  {src_code} \u2192 {dst_code}"
@@ -673,9 +698,9 @@ def main():
                 rc, typed = translate_window(
                     info, f"{src_code}\u2192{dst_code}",
                     f"Type {lang_name(src_code)}, Enter to translate to "
-                    f"{lang_name(dst_code)}", ime_source)
+                    f"{lang_name(dst_code)}", ime_mode_value)
                 if rc == 10:
-                    chosen = pick_model(models, model, True)
+                    chosen = pick_model(models, model)
                     if chosen:
                         model = chosen
                         save_last_model(model)

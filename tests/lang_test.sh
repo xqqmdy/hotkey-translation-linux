@@ -70,4 +70,16 @@ SYSTEM=$(python3 -c "import json; print(json.loads(open('$T/req.log').readlines(
 echo "$SYSTEM" | grep -q "user's Chinese text" || fail "default source not zh: $SYSTEM"
 echo "$SYSTEM" | grep -q "idiomatic English" || fail "default target not en: $SYSTEM"
 
-echo "PASS: source/target language configurable, defaults zh -> en"
+# IME gating: only zh and Latin sources may switch the IME
+python3 - <<'PY' || fail "ime gating wrong"
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader('ht', 'hotkey-translation').load_module()
+assert m.ime_mode("zh") == "zh"
+assert m.ime_mode("en") == "en"
+assert m.ime_mode("ja") is None
+assert m.ime_mode("ko") is None
+assert m.ime_mode("ar") is None
+assert m.ime_ascii("zh") is False, "Chinese source must select the Chinese IME"
+assert m.ime_ascii("en") is True
+PY
+echo "PASS: source/target configurable, defaults zh -> en, IME left alone for other scripts"

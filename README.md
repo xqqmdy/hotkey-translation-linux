@@ -22,10 +22,12 @@ All window text is English regardless of the source language. The rofi theme is
 a dark translucent window: monospace 12, `#1e1e2edd` background, `#89b4faff`
 border, `#585b70ff` selection, 42em wide.
 
-Rime is set for the source language while the window is open: Chinese source
-forces the Chinese IME, any other source forces English, and English is left
-behind afterwards. Rime only knows those two modes, so a third language keeps
-whichever of the two is closer.
+Rime is only touched when it can help: a Chinese source switches it to Chinese,
+a Latin-script source (`en`, `fr`, `de`, ...) switches it to English. Any other
+source (`ja`, `ko`, `ar`, ...) leaves the current mode alone, because forcing
+English there would send that language's keystrokes down the ASCII path. After
+the window the IME is left in English, and the model window restores whatever
+mode was active when it opened.
 
 Model choice is not part of the typing flow. The active model is the config
 `model` if set, else the last picked one, else the first live free model.
