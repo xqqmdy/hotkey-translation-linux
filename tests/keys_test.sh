@@ -1,6 +1,6 @@
 #!/bin/sh
 # Window-loop test with a stub rofi:
-#   1) exits 10 (the Alt+m custom key)      -> model window opens
+#   1) exits 10 (the Ctrl+Tab custom key)      -> model window opens
 #   2) returns a model row                   -> model saved
 #   3) returns the typed text                -> translated
 set -eu
@@ -82,4 +82,4 @@ req = json.loads(open(sys.argv[1]).readlines()[-1])
 assert req["model"] == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", req["model"]
 assert req["messages"][-1]["content"] == "你好世界", req["messages"][-1]
 PY
-echo "PASS: Alt+m opens models, pick returns to the text window, text translates"
+echo "PASS: Ctrl+Tab opens models, pick returns to the text window, text translates"

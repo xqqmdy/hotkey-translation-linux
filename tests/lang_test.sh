@@ -1,6 +1,6 @@
 #!/bin/sh
 # Language direction test: fake /chat/completions logs the system prompt, so
-# we can assert source_lang/target_lang land in it. No fuzzel, no key.
+# we can assert source_lang/target_lang land in it. No rofi, no key.
 set -eu
 cd "$(dirname "$0")/.."
 

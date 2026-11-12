@@ -243,11 +243,14 @@ def translate_window(info, prompt, placeholder, ime_source):
 
     -format f returns the typed filter instead of a selected row, so Enter
     always submits the text (rofi refuses custom entries otherwise). The
-    custom key Alt+m exits with code 10, which switches to the model window.
+    custom key Ctrl+Tab exits with code 10, which switches to the model window.
     """
     cmd = ["rofi", "-dmenu", "-format", "f", "-p", prompt,
-           "-mesg", info + "    Alt+m 切换模型",
-           "-kb-custom-1", "alt+m",
+           "-mesg", info + "    Ctrl+Tab 切换模型",
+           "-kb-custom-1", "Control+Tab",
+           # rofi binds Ctrl+Tab to mode-next by default; free it so the
+           # custom key gets through.
+           "-kb-mode-next", "",
            "-theme-str", theme_str(placeholder, 1)]
     prev = rime_ascii()
     use_ime = prev is not None

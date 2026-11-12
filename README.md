@@ -7,11 +7,11 @@ configurable.
 ## Flow
 
 1. Press `Mod+Y`, a rofi window pops up
-2. Type the source text and press `Enter`; `Alt+m` switches to the model list
+2. Type the source text and press `Enter`; `Ctrl+Tab` switches to the model list
 3. `Ctrl+V` pastes the translated result
 
 `Enter` submits the text because rofi runs with `-format f` (it returns the
-typed filter, not a selected row), and `-kb-custom-1 alt+m` exits with code 10,
+typed filter, not a selected row), and `-kb-custom-1 Control+Tab` exits with code 10,
 which the script turns into "open the model window". Models never appear in the
 text window, so typing can never be mistaken for a model pick.
 
@@ -81,5 +81,5 @@ provider policy on OpenRouter before sending anything private.
 asserts the clipboard holds the translated result. `pick_test.sh` stubs
 rofi and `/models` to assert the pick is persisted and the free filter holds.
 `lang_test.sh` asserts the direction config reaches the system prompt and that
-the defaults are `zh` to `en`. `keys_test.sh` replays the window loop (Alt+m,
+the defaults are `zh` to `en`. `keys_test.sh` replays the window loop (Ctrl+Tab,
 model selection, text) with a stub rofi.

@@ -1,6 +1,6 @@
 #!/bin/sh
 # End to end test with a fake OpenRouter server. No key, no network.
-# Bypasses both fuzzel prompts via HT_TEXT/HT_MODEL, runs hotkey-translation
+# Bypasses the rofi prompt via HT_TEXT/HT_MODEL, runs hotkey-translation
 # against the fake, asserts clipboard holds the English result.
 set -eu
 cd "$(dirname "$0")/.."
