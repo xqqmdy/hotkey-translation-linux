@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """hotkey-translation: type source-language text in rofi, get the target language in the clipboard.
 
-Flow: Mod+Y pops a rofi input, type Chinese, Enter; translation lands in
-the clipboard with a notification, Ctrl+V pastes it anywhere. Rime is driven
+Flow: run the script from a key binding; it pops a rofi input, type the
+source text, Enter; the translation lands in the clipboard with a
+notification, Ctrl+V pastes it anywhere. Rime is driven
 to Chinese while the input window is open and left in English after Enter.
 The model is never asked for in this flow: `hotkey-translation --pick` opens a
 live free-model list (fetched from OpenRouter, not a curated list).
@@ -279,9 +280,9 @@ def parse_model_row(row):
     return ""
 
 
-# Mirrors ~/.config/fuzzel/fuzzel.ini so the window looks the same after the
-# switch to rofi: monospace 12, #1e1e2edd background, #cdd6f4ff text,
-# #89b4faff border, #585b70ff selection, #f38ba8ff match.
+# Window theme: monospace 12, #1e1e2edd translucent background, #cdd6f4ff text,
+# #89b4faff border, #585b70ff selection, #f38ba8ff match highlight. The
+# entry/message rows are transparent so the window reads as one dark surface.
 ROFI_THEME = (
     'window { width: 42em; border: 1px; border-color: #89b4faff; '
     'border-radius: 10px; background-color: #1e1e2edd; padding: 8px; } '
