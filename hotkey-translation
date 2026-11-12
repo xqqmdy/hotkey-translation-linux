@@ -253,9 +253,12 @@ ROFI_THEME = (
     'border-radius: 10px; background-color: #1e1e2edd; padding: 8px; } '
     'mainbox { background-color: transparent; padding: 0; spacing: 0; } '
     'inputbar { background-color: transparent; padding: 2px 4px; spacing: 8px; } '
-    'prompt { text-color: #89b4faff; } '
-    'entry { text-color: #cdd6f4ff; placeholder-color: #6c7086ff; } '
-    'message { text-color: #6c7086ff; padding: 2px 4px; } '
+    'prompt { text-color: #89b4faff; background-color: transparent; } '
+    'entry { text-color: #cdd6f4ff; placeholder-color: #6c7086ff; '
+    'background-color: transparent; } '
+    'message { text-color: #6c7086ff; padding: 2px 4px; '
+    'background-color: transparent; } '
+    'textbox { background-color: transparent; text-color: #cdd6f4ff; } '
     'listview { background-color: transparent; lines: 12; columns: 1; '
     'scrollbar: false; } '
     'scrollbar { width: 4px; handle-color: #585b70ff; '
@@ -273,12 +276,28 @@ ROFI_THEME = (
 )
 
 
-def theme_str(lines, placeholder=""):
+ROFI_THEME_FILE = os.path.expanduser("~/.cache/hotkey-translation/theme.rasi")
+
+
+def theme_file(lines, placeholder=""):
+    """Write the theme and return its path.
+
+    rofi drops the message widget when the theme comes from -theme-str, so the
+    theme goes through a file instead; that keeps the model line visible.
+    """
     theme = ROFI_THEME.replace("lines: 12;", f"lines: {lines};")
     if placeholder:
-        theme += (' entry { placeholder: "%s"; }'
+        theme += ('\nentry { placeholder: "%s"; }'
                   % placeholder.replace('"', ""))
-    return theme
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = ROFI_THEME_FILE + f".{os.getpid()}"
+        with open(tmp, "w") as f:
+            f.write(theme + "\n")
+        os.replace(tmp, ROFI_THEME_FILE)
+    except OSError:
+        return None
+    return ROFI_THEME_FILE
 
 
 def model_rows(models):
@@ -302,7 +321,7 @@ def pick_model(models, current, ime_source=False):
     """Model window: rofi dmenu over the live free list, Enter picks."""
     cmd = ["rofi", "-dmenu", "-i", "-p", "free model",
            "-mesg", f"current: {current}    Enter: select    Esc: back",
-           "-theme-str", theme_str(12, "Filter models")]
+           "-theme", theme_file(12, "Filter models")]
     rime_force(True)  # model ids are ASCII
     proc = subprocess.run(cmd, input="\n".join(model_rows(models)) + "\n",
                           capture_output=True, text=True)
@@ -325,7 +344,7 @@ def translate_window(info, prompt, placeholder, ime_source):
            # custom key gets through.
            "-kb-mode-next", "",
            "-font", "monospace 12",
-           "-theme-str", theme_str(1, placeholder)]
+           "-theme", theme_file(1, placeholder)]
     prev = rime_ascii()
     use_ime = prev is not None
     if use_ime:
@@ -614,8 +633,8 @@ def main():
     dst_name = lang_name(dst_code)
     prompt = build_prompt(src_code, dst_code)
     ime_source = (src_code or "").lower() in IME_SOURCE
-    cached = (read_json(MODELS_CACHE) or {}).get("models") or []
-    label = model_label(model, cached)
+    cached_rows = (read_json(MODELS_CACHE) or {}).get("data") or []
+    label = model_label(model, filter_models(cached_rows))
     info = f"model: {label}  \u00b7  {src_code} \u2192 {dst_code}"
 
     use_rofi = shutil.which("rofi") is not None

@@ -36,8 +36,13 @@ Model choice is not part of the typing flow. The active model is the config
 
 `Mod+Shift+Y` (or `hotkey-translation --pick`) opens the model window directly.
 The list comes from the live OpenRouter `/models` response, filtered to free
-text models, and is cached for `models_ttl_secs` (a stale cache is used when the
-network is down).
+text models. The cache (`~/.cache/hotkey-translation/models.json`) stores the
+raw payload, so filter changes apply on the next read instead of waiting for
+the TTL. A fresh cache (default one day) skips the network; a stale one is
+served immediately and refreshed in the background, so the window never blocks
+on `/models`. Only a missing cache pays one blocking fetch (about half a second
+here). `--list-models` prints the current rows, `--refresh-models` updates the
+cache by hand.
 
 ## Setup
 
