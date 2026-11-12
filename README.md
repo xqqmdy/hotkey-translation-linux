@@ -44,6 +44,15 @@ on `/models`. Only a missing cache pays one blocking fetch (about half a second
 here). `--list-models` prints the current rows, `--refresh-models` updates the
 cache by hand.
 
+## Clipboard
+
+Writes go to the first working backend in this order: `wl-copy`, `xclip`,
+`xsel`. Reads use `wl-paste` (clipboard, then primary), then `xclip`, then
+`xsel`. So the tool runs on a Wayland session with `wl-clipboard`, on X11 with
+`xclip` or `xsel`, and on a mixed session with either. Rofi, fcitx5 and the
+notification daemon are session-agnostic; rofi 2.x picks its Wayland backend
+when `WAYLAND_DISPLAY` is set.
+
 ## Setup
 
 ```sh
