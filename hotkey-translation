@@ -26,6 +26,13 @@ import urllib.request
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 CONFIG_DEFAULT = os.path.expanduser("~/.config/hotkey-translation/config.toml")
+DEFAULT_MAX_TOKENS = 512
+
+# Reasoning models spend max_tokens on hidden thinking before writing any
+# translation, so a translation-only request asks for reasoning to be off.
+# Endpoints that refuse the flag answer 400 "Reasoning is mandatory"; those
+# are remembered here and retried without it.
+REASONING_UNSUPPORTED = set()
 
 # ISO-ish codes mapped to the names used in the prompt. Unknown codes are
 # passed through as-is, so any language code the model understands works.
@@ -573,19 +580,10 @@ def resolve_model(cfg, base_url):
     return models[0]["id"] if models else ""
 
 
-def translate(base_url, api_key, model, text, timeout, prompt):
-    body = json.dumps({
-        "model": model,
-        "temperature": 0.2,
-        "max_tokens": 512,
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": text},
-        ],
-    }).encode()
+def post_chat(base_url, api_key, payload, timeout):
     req = urllib.request.Request(
         base_url.rstrip("/") + "/chat/completions",
-        data=body,
+        data=json.dumps(payload).encode(),
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -593,29 +591,72 @@ def translate(base_url, api_key, model, text, timeout, prompt):
             "X-Title": "hotkey-translation",
         },
     )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+def read_error(e):
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
+        return e.read().decode()[:300]
+    except OSError:
+        return ""
+
+
+def api_error(e, detail):
+    if e.code == 401:
+        die("OpenRouter auth failed (401)", "check openrouter_api_key in config")
+    if e.code == 402:
+        die("OpenRouter payment required (402)", detail or "free model unavailable")
+    if e.code == 404:
+        die("model not found (404)", "free model IDs rotate, run: hotkey-translation --pick")
+    if e.code == 429:
+        die("rate limited (429)", "free tier quota hit, wait and retry")
+    die(f"OpenRouter HTTP {e.code}", detail)
+
+
+def translate(base_url, api_key, model, text, timeout, prompt,
+              max_tokens=DEFAULT_MAX_TOKENS):
+    payload = {
+        "model": model,
+        "temperature": 0.2,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": text},
+        ],
+    }
+    cache_key = (base_url, model)
+    if cache_key not in REASONING_UNSUPPORTED:
+        payload["reasoning"] = {"enabled": False}
+    try:
         try:
-            detail = e.read().decode()[:300]
-        except OSError:
-            detail = ""
-        if e.code == 401:
-            die("OpenRouter auth failed (401)", "check openrouter_api_key in config")
-        if e.code == 402:
-            die("OpenRouter payment required (402)", detail or "free model unavailable")
-        if e.code == 404:
-            die("model not found (404)", "free model IDs rotate, run: hotkey-translation --pick")
-        if e.code == 429:
-            die("rate limited (429)", "free tier quota hit, wait and retry")
-        die(f"OpenRouter HTTP {e.code}", detail)
+            data = post_chat(base_url, api_key, payload, timeout)
+        except urllib.error.HTTPError as e:
+            detail = read_error(e)
+            # A 400 can mean the endpoint rejects the reasoning flag; retry
+            # once without it and surface the retry's error if that fails too.
+            if e.code != 400 or "reasoning" not in payload:
+                api_error(e, detail)
+            REASONING_UNSUPPORTED.add(cache_key)
+            payload.pop("reasoning")
+            data = post_chat(base_url, api_key, payload, timeout)
+    except urllib.error.HTTPError as e:
+        api_error(e, read_error(e))
     except urllib.error.URLError as e:
         die("network error", str(e.reason)[:200])
     try:
-        content = payload["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        content = choice["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        die("bad API response", json.dumps(payload)[:300])
+        die("bad API response", json.dumps(data)[:300])
+    if content is None:
+        usage = data.get("usage") or {}
+        spent = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+        die("model returned no translation",
+            f"finish_reason={choice.get('finish_reason')}, "
+            f"reasoning_tokens={spent}: the model spent the whole token "
+            f"budget ({max_tokens}) thinking; raise max_tokens in the config "
+            "or run: hotkey-translation --pick")
     out = content.strip()
     if len(out) >= 2 and out[0] == out[-1] and out[0] in ("\"", "'", "\u201c"):
         out = out[1:-1].strip()
@@ -643,6 +684,10 @@ def main():
         ttl = int(cfg.get("models_ttl_secs", MODELS_TTL))
     except (TypeError, ValueError):
         ttl = MODELS_TTL
+    try:
+        max_tokens = int(cfg.get("max_tokens", DEFAULT_MAX_TOKENS))
+    except (TypeError, ValueError):
+        max_tokens = DEFAULT_MAX_TOKENS
 
     if not api_key or api_key == "PASTE_YOUR_KEY_HERE":
         die("missing API key", "fill openrouter_api_key in ~/.config/hotkey-translation/config.toml", 2)
@@ -719,7 +764,7 @@ def main():
                 text = typed
                 break
 
-    result = translate(base_url, api_key, model, text, timeout, prompt)
+    result = translate(base_url, api_key, model, text, timeout, prompt, max_tokens)
     write_clipboard(result)
     print(result)
     notify(f"translate [{model.split('/')[-1][:40]}]", result)

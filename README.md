@@ -88,6 +88,7 @@ provider policy on OpenRouter before sending anything private.
 | `401` | Wrong or revoked key |
 | `404` | Model ID retired, pick another with `hotkey-translation --pick` |
 | `429` | Free tier quota hit, wait and retry |
+| `model returned no translation` | Reasoning model burned `max_tokens` on hidden thinking; raise `max_tokens` or pick another model |
 | `no free models` | `/models` unreachable and no cache; check network |
 | No notification | `notify-send` missing or D-Bus down; translation still lands in clipboard |
 
