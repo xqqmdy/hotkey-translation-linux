@@ -111,3 +111,7 @@ the defaults are `zh` to `en`. `keys_test.sh` replays the window loop (Ctrl+Tab,
 model selection, text) with a stub rofi. `cache_test.sh` asserts the raw payload
 cache, the warm no-network path, read-time filters, and the stale serve plus
 background refresh. `clipboard_test.sh` asserts the X11 fallback.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
